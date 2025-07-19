@@ -1,4 +1,48 @@
 
+brought code from https://github.com/rsxdalv/chatterbox/tree/fast and https://github.com/rsxdalv/extension_chatterbox
+
+( Check out https://github.com/rsxdalv/TTS-WebUI - it pretty cool! )
+
+
+
+Need Python version 3.12: https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+
+
+Should install everything:
+
+```bat
+1_Install.bat 
+```
+
+Should start it up:
+
+```bat
+ 2_Start_Chatterbox.bat
+```
+
+
+
+This is as tuned as I can get Chatterbox.
+left a lot of print statements in so lots of output
+most parameters are hardcoded in gradio_tts_app; torch_compile gets cranky when things change.
+some of these need more tweaking min_p , cfg, exaggeration, max_tokens, max_cache_len
+tried trimming silence from input wav but model seems very sensitive to the reference files.
+installer and start scripts seem to work
+
+attempt at memory and disk cache for conditionals. not sure if they work right.
+
+incoming temp file are stored in `upload_temp` folder
+outgoing temp files are stored in `output_temp` folder
+
+No attempt to clean up these folders, so you may want to do that manually.
+
+
+---
+
+---
+
+
+
 <img width="1200" alt="cb-big2" src="https://github.com/user-attachments/assets/bd8c5f03-e91d-4ee5-b680-57355da204d1" />
 
 # Chatterbox TTS
