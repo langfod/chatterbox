@@ -1,9 +1,8 @@
 @echo off
 
-echo""
-echo Starting Chatterbox Gadio Client...:
+echo Starting Chatterbox Gradio Server in a new window...
 
-call ".venv/scripts/activate.bat"
+call ".venv\scripts\activate.bat"
 
 start "Chatterbox" /high python gradio_tts_app.py
 

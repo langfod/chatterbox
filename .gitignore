@@ -52,3 +52,6 @@ checkpoints/
 /.env_win
 /.idea
 /cache
+/output
+/upload_temp
+/output_temp

@@ -1,21 +1,19 @@
 import functools
-import hashlib
 import re
 import threading
 import time
 from contextlib import contextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING
-
 import gradio as gr
 import numpy as np
 import torch
+from torch.serialization import safe_globals
 
 from src.InterruptionFlag import interruptible, InterruptionFlag
 from src.chatterbox.models.t3.modules.cond_enc import T3Cond
 from src.chatterbox.tts import Conditionals
 from src.simple_model_state import simple_manage_model_state
-
+from src.util_functions import (save_torchaudio_wav, get_cache_key, get_cache_dir)
 if TYPE_CHECKING:
     from src.chatterbox.tts import ChatterboxTTS
 
@@ -152,40 +150,7 @@ def cpu_offload_context(model, device, dtype, cpu_offload=False):
 _conditionals_memory_cache = {}
 _cache_lock = threading.Lock()
 
-def get_cache_dir():
-    """Get or create the conditionals cache directory"""
-    cache_dir = Path("cache/conditionals")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    return cache_dir
 
-def get_cache_key(audio_path, uuid, exaggeration):
-    """Generate a cache key based on audio file, UUID, and exaggeration"""
-    if audio_path is None:
-        return None
-
-    # Extract just the filename without extension as prefix
-    try:
-        filename = Path(audio_path).stem  # Gets filename without extension
-        # Remove any temp directory prefixes, just keep the actual filename
-        cache_prefix = filename
-    except Exception:
-        cache_prefix = "unknown"
-
-    # Convert UUID to hex string for readability
-    try:
-        uuid_hex = hex(uuid)[2:]  # Remove '0x' prefix
-    except (TypeError, ValueError):
-        uuid_hex = str(uuid)
-
-    # Create cache key: prefix_uuid_exaggeration
-    cache_key = f"{cache_prefix}_{uuid_hex}_{exaggeration}"
-
-    # Use MD5 hash if the key gets too long (over 100 chars)
-    if len(cache_key) > 100:
-        cache_hash = hashlib.md5(cache_key.encode()).hexdigest()
-        return f"{cache_prefix}_{cache_hash}"
-
-    return cache_key
 
 def _save_conditionals_to_disk(cache_key, cond_cls):
     """Non-blocking worker function to save conditionals to disk"""
@@ -208,25 +173,28 @@ def save_conditionals_cache(cache_key, cond_cls):
     if cache_key is None:
         return
 
-    # TODO Disk cache possibly broken, not used
-    #try:
-    #    # Save to memory cache (blocking, but fast)
-    #    with _cache_lock:
-    #        _conditionals_memory_cache[cache_key] = {'t3':cond_cls.t3, 'gen':cond_cls.gen}
-    #        print(f"Saved conditionals to memory cache: {cache_key}")
+    try:
+        # Save to memory cache (blocking, but fast)
+        with _cache_lock:
+            _conditionals_memory_cache[cache_key] = {
+                't3_dict': cond_cls.t3.__dict__.copy(),
+                'gen': cond_cls.gen
+            }
+            print(f"Saved conditionals to memory cache: {cache_key}")
 
-    #    # Save to disk (non-blocking)
-    #    threading.Thread(
-    #        target=_save_conditionals_to_disk,
-    #        args=(cache_key, cond_cls),
-    #        daemon=True
-    #    ).start()
+        # Save to disk (non-blocking)
+        threading.Thread(
+            target=_save_conditionals_to_disk,
+            args=(cache_key, cond_cls),
+            daemon=True
+        ).start()
 
-    #except Exception as e:
-    #    print(f"Failed to prepare conditionals cache: {e}")
+    except Exception as e:
+        print(f"Failed to prepare conditionals cache: {e}")
+
 
 def load_conditionals_cache(cache_key, model, device, dtype):
-    """Load prepared conditionals from memory or disk with optional GDS acceleration"""
+    """Load prepared conditionals from memory or disk"""
     if cache_key is None:
         return None
 
@@ -236,42 +204,48 @@ def load_conditionals_cache(cache_key, model, device, dtype):
             if cache_key in _conditionals_memory_cache:
                 cache_data = _conditionals_memory_cache[cache_key]
 
-                # Restore conditionals to model
-                if 't3' in cache_data and cache_data['t3'] is not None:
-                    model.set_conditionals(Conditionals(T3Cond(cache_data['t3']), cache_data['gen']))
+                # Restore conditionals from dict
+                if 't3_dict' in cache_data and 'gen' in cache_data:
+                    # Recreate T3Cond from dict
+                    t3_cond = T3Cond(**cache_data['t3_dict'])
+                    t3_cond = t3_cond.to(device=device, dtype=dtype)
+
+                    # Create new Conditionals object
+                    conditionals = Conditionals(t3_cond, cache_data['gen'])
+                    model.set_conditionals(conditionals)
 
                 print(f"Loaded conditionals from memory cache: {cache_key}")
                 return True
 
-        # TODO Disk cache possibly broken, not used
-        ## Try disk cache with GDS
-        #cache_dir = get_cache_dir()
-        #cache_file = cache_dir.joinpath(cache_key + ".pt")
-#
-        #if not cache_file.exists():
-        #    return None
-#
-        #with safe_globals([T3Cond]):
-        #    #cond_cls = Conditionals.load(cls=Conditionals,fpath=cache_file)
-        #    map_location = torch.device("cpu")
-        #    kwargs = torch.load(cache_file, map_location=map_location, weights_only=True)
-        #    cond_cls =  Conditionals(T3Cond(**kwargs['t3']), kwargs['gen'])
-        #print(f"loaded cond {cond_cls.__sizeof__()}")
-        ## Restore conditionals to model
-        #if hasattr(cond_cls, 't3'):
-        #   model.set_conditionals(cond_cls)
-        #   print(f"set conditionals")
-#
-        ## Store in memory cache for next time
-        #cache_dict = dict(
-        #    t3=cond_cls.__dict__,
-        #    gen=cond_cls.gen
-        #)
-        #with _cache_lock:
-        #    _conditionals_memory_cache[cache_key] = cache_dict
-#
-        #print(f"Loaded conditionals cache: {cache_key}")
-        #return True
+
+
+        cache_dir = get_cache_dir()
+        cache_file = cache_dir.joinpath(cache_key + ".pt")
+
+        if not cache_file.exists():
+            return None
+
+        with safe_globals([T3Cond]):
+            #cond_cls = Conditionals.load(cls=Conditionals,fpath=cache_file)
+            map_location = torch.device("cpu")
+            kwargs = torch.load(cache_file, map_location=map_location, weights_only=True)
+            cond_cls =  Conditionals(T3Cond(**kwargs['t3']), kwargs['gen'])
+        print(f"loaded cond {cond_cls.__sizeof__()}")
+        # Restore conditionals to model
+        if hasattr(cond_cls, 't3'):
+           model.set_conditionals(cond_cls)
+           print(f"set conditionals")
+
+        # Store in memory cache for next time
+        cache_dict = dict(
+            t3=cond_cls.__dict__,
+            gen=cond_cls.gen
+        )
+        with _cache_lock:
+            _conditionals_memory_cache[cache_key] = cache_dict
+
+        print(f"Loaded conditionals cache: {cache_key}")
+        return True
 
     except Exception as e:
         import traceback
@@ -412,7 +386,7 @@ global_interrupt_flag = InterruptionFlag()
 
 
 @functools.wraps(_tts_generator)
-def tts(*args, **kwargs):
+def tts(*args, use_int16=False, as_wav=False, **kwargs):
     start_time = time.time()
     try:
         # Collect all results efficiently
@@ -440,35 +414,65 @@ def tts(*args, **kwargs):
         if not wav_tensors:
             raise gr.Error("No audio generated")
 
+        generation_time = time.time() - start_time
+
         # Determine if we should use GPU optimization
         use_gpu = (device != "cpu" and
                   len(wav_tensors) > 0 and
                   torch.is_tensor(wav_tensors[0]) and
                   wav_tensors[0].is_cuda)
-        # Optimized concatenation based on device
+        # Optimized concatenation and conversion based on device
         with torch.no_grad():
             if use_gpu and len(wav_tensors) > 1:
-                # GPU-based concatenation - keep tensors on GPU until final conversion
+                # GPU-based concatenation
                 full_wav_tensor = torch.cat(wav_tensors, dim=0)
-                full_wav = full_wav_tensor.cpu().numpy()
+
+                # Handle int16 conversion on GPU if needed
+                if use_int16 or as_wav:
+                    # Convert to int16 on GPU
+                    full_wav_int16_tensor = (full_wav_tensor * 32767).to(torch.int16)
+                    full_wav_int16 = full_wav_int16_tensor.cpu().numpy()
+                else:
+                    full_wav = full_wav_tensor.cpu().numpy()
+
             elif use_gpu and len(wav_tensors) == 1:
                 # Single tensor on GPU
-                full_wav = wav_tensors[0].cpu().numpy()
+                full_wav_tensor = wav_tensors[0]
+
+                # Handle int16 conversion on GPU if needed
+                if use_int16 or as_wav:
+                    full_wav_int16_tensor = (full_wav_tensor * 32767).to(torch.int16)
+                    full_wav_int16 = full_wav_int16_tensor.cpu().numpy()
+                else:
+                    full_wav = full_wav_tensor.cpu().numpy()
             else:
                 # CPU fallback - convert tensors to numpy first, then concatenate
                 wav_arrays = [t.cpu().numpy() if torch.is_tensor(t) else t for t in wav_tensors]
                 full_wav = np.concatenate(wav_arrays, axis=0) if len(wav_arrays) > 1 else wav_arrays[0]
 
+                # Handle int16 conversion on CPU if needed
+                if use_int16 or as_wav:
+                    full_wav_int16 = (full_wav * 32767).astype(np.int16)
+
+
+        if use_int16 or as_wav:
+            wav_out = full_wav_int16
+        else:
+            wav_out = full_wav
+#
+
         # Calculate timing and performance metrics
         end_time = time.time()
         execution_time = end_time - start_time
-        audio_length_seconds = len(full_wav) / sr
+        audio_length_seconds = len(wav_out) / sr
         speed_ratio = audio_length_seconds / execution_time
-
         print(f"  Execution time: {execution_time:.2f}s  Audio length: {audio_length_seconds:.2f}s")
-        print(f"  Speed ratio: {speed_ratio:.2f}x (audio_length/execution_time)")
+        print(f"  generation_time time: {generation_time:.2f}s  Speed ratio: {speed_ratio:.2f}x (audio_length/execution_time)")
 
-        return sr, full_wav
+        if as_wav:
+            return save_torchaudio_wav(torch.from_numpy(wav_out).unsqueeze(0),sr, audio_path=kwargs.get('audio_prompt_path'), uuid=kwargs.get('cache_uuid', -1))
+        else:
+            return sr, wav_out
 
     except Exception as e:
         end_time = time.time()

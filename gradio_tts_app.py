@@ -83,10 +83,10 @@ def generate_audio(
         text=text,
         audio_prompt_path=speaker_audio,
         seed_num=seed,
-        cfgw=0.3,
-        min_p=0.5,
-        top_p=1.0,
-        repetition_penalty=1.9,
+        #cfgw=0.25,
+        #min_p=0.5,
+        #top_p=1.0,
+        #repetition_penalty=1.9,
         cache_uuid=uuid,  # Pass UUID for disk caching
         do_progress=False,
     ), uuid]
@@ -111,20 +111,15 @@ def generate(model_state, text, audio_prompt_path,
              cache_uuid=-1,
              do_progress=False,
              ):
-    print(f"""Generate using inputs: model_state = {model_state}, text = {text}, audio_prompt_path = {audio_prompt_path},
-    exaggeration = {exaggeration}, 
-    temperature = {temperature}, 
-    seed_num = {seed_num}, 
-    cfgw = {cfgw}, 
-    min_p = {min_p}, 
-    top_p = {top_p}, 
+    print(f"""Generate using inputs: text = {text}, 
+    audio_prompt_path = {audio_prompt_path},
+    exaggeration = {exaggeration}, temperature = {temperature}, 
+    seed_num = {seed_num}, cfgw = {cfgw}, 
+    min_p = {min_p}, top_p = {top_p}, 
     repetition_penalty = {repetition_penalty}, 
-    device = {device}, 
-    dtype = {dtype}, 
-    chunked = {chunked}, 
-    cache_voice = {cache_voice}, 
-    max_cache_len = {max_cache_len}, 
-    max_new_tokens = {max_new_tokens}, 
+    device = {device}, dtype = {dtype}, 
+    chunked = {chunked}, cache_voice = {cache_voice}, 
+    max_cache_len = {max_cache_len}, max_new_tokens = {max_new_tokens}, 
     use_compilation = {use_compilation}, 
     cache_uuid = {cache_uuid}
     """)
@@ -154,6 +149,8 @@ def generate(model_state, text, audio_prompt_path,
         use_compilation=use_compilation,
         cache_uuid=cache_uuid,
         do_progress=do_progress,
+        use_int16=True,
+        as_wav=True,
     )
 
 
@@ -189,6 +186,7 @@ with gr.Blocks() as demo:
 
         with gr.Column():
             audio_output = gr.Audio(label="Output Audio")
+            wav_out = gr.File(label="Output Audio", visible=False)
 
 
     run_btn.click(
@@ -267,11 +265,16 @@ with gr.Blocks() as demo:
         randomize_seed_toggle,
         unconditional_keys,
     ],
-                     outputs=[audio_output, seed_num],
+                     outputs=[wav_out, seed_num],
                      )
     #demo.load(fn=load_model, inputs=[], outputs=model_state)
 
 import argparse
+import os
+from src.util_functions import get_process_creation_time
+temp_dir = Path("upload_temp").joinpath(get_process_creation_time().strftime("%Y%m%d_%H%M%S"))
+os.environ["GRADIO_TEMP_DIR"] = str(temp_dir)
+os.makedirs(temp_dir, exist_ok=True)
 parser = argparse.ArgumentParser()
 parser.add_argument('--share', action='store_true')
 parser.add_argument("--server", type=str, default='0.0.0.0')
@@ -279,6 +282,7 @@ parser.add_argument("--port", type=int, required=False)
 parser.add_argument("--inbrowser", action='store_true')
 parser.add_argument("--output_dir", type=str, default='./outputs')
 args = parser.parse_args()
+static_paths = [str(Path(script_directory).joinpath("assets")), str(Path(script_directory).joinpath("upload_temp")), str(Path(script_directory).joinpath("output_temp"))]
 
 if __name__ == "__main__":
     if "demo" in locals():
@@ -287,14 +291,14 @@ if __name__ == "__main__":
     print("\nWarming up model...\n")
     warmup_output = generate_audio(speaker_audio=Path(script_directory).joinpath("assets","fishaudio_horror.wav"))
 
-    gr.set_static_paths(paths=[Path.cwd().absolute()/"assets"])
+    gr.set_static_paths(paths=static_paths)
     gr.cache_examples=True
     demo.queue(
         max_size=50,
-        default_concurrency_limit=1,
+        default_concurrency_limit=5,
     ).launch(
         server_name=args.server,
         server_port=args.port,
         share=args.share,
-        inbrowser=args.inbrowser
+        inbrowser=args.inbrowser,
     )
