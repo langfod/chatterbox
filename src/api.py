@@ -227,7 +227,7 @@ def load_conditionals_cache(cache_key, model, device, dtype):
 
         with safe_globals([T3Cond]):
             #cond_cls = Conditionals.load(cls=Conditionals,fpath=cache_file)
-            map_location = torch.device("cpu")
+            map_location = torch.device("cuda")
             kwargs = torch.load(cache_file, map_location=map_location, weights_only=True)
             cond_cls =  Conditionals(T3Cond(**kwargs['t3']), kwargs['gen'])
         print(f"loaded cond {cond_cls.__sizeof__()}")
