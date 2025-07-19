@@ -20,7 +20,7 @@ Should start it up:
  2_Start_Chatterbox.bat
 ```
 
-
+Set SkyrimNet to use "Zonos" as the TTS model.
 
 This is as tuned as I can get Chatterbox.
 left a lot of print statements in so lots of output
