@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from functools import lru_cache
 
 import librosa
 import torch
@@ -16,7 +17,12 @@ from .models.voice_encoder import VoiceEncoder
 
 REPO_ID = "ResembleAI/chatterbox"
 
+# Ensure CUDA is available for GPU-only usage
+if not torch.cuda.is_available():
+    raise RuntimeError("CUDA is required but not available. This version is optimized for GPU-only usage.")
 
+# Cache for text preprocessing
+@lru_cache(maxsize=1000)
 def punc_norm(text: str) -> str:
     """
         Quick cleanup func for punctuation from LLMs or
@@ -132,12 +138,6 @@ class ChatterboxTTS:
     def from_local(cls, ckpt_dir, device) -> 'ChatterboxTTS':
         ckpt_dir = Path(ckpt_dir)
 
-        # Always load to CPU first for non-CUDA devices to handle CUDA-saved models
-        if device in ["cpu", "mps"]:
-            map_location = torch.device('cpu')
-        else:
-            map_location = None
-
         ve = VoiceEncoder()
         ve.load_state_dict(
             load_file(ckpt_dir / "ve.safetensors")
@@ -163,21 +163,12 @@ class ChatterboxTTS:
 
         conds = None
         if (builtin_voice := ckpt_dir / "conds.pt").exists():
-            conds = Conditionals.load(builtin_voice, map_location=map_location).to(device)
+            conds = Conditionals.load(builtin_voice, map_location="cpu").to(device)
 
         return cls(t3, s3gen, ve, tokenizer, device, conds=conds)
 
     @classmethod
     def from_pretrained(cls, device) -> 'ChatterboxTTS':
-        # Check if MPS is available on macOS
-        if device == "mps" and not torch.backends.mps.is_available():
-            if not torch.backends.mps.is_built():
-                print("MPS not available because the current PyTorch install was not built with MPS enabled.")
-            else:
-                print(
-                    "MPS not available because the current MacOS version is not 12.3+ and/or you do not have an MPS-enabled device on this machine.")
-            device = "cpu"
-
         for fpath in ["ve.safetensors", "t3_cfg.safetensors", "s3gen.safetensors", "tokenizer.json", "conds.pt"]:
             local_path = hf_hub_download(repo_id=REPO_ID, filename=fpath)
 
@@ -235,27 +226,14 @@ class ChatterboxTTS:
             print(
                 "Streaming by token slices has been discontinued due to audio clipping. Continuing with full generation.")
 
-        #if audio_prompt_path:
-        #    self.prepare_conditionals(audio_prompt_path, exaggeration=exaggeration)
-        #else:
-        #    assert self.conds is not None, "Please `prepare_conditionals` first or specify `audio_prompt_path`"
-#
-        ## Update exaggeration if needed
-        #print(f"Exaggeration: {exaggeration} emotion_adv: {self.conds.t3.emotion_adv[0, 0, 0]}")
-        #if exaggeration != self.conds.t3.emotion_adv[0, 0, 0]:
-        #    _cond: T3Cond = self.conds.t3
-        #    self.conds.t3 = T3Cond(
-        #        speaker_emb=_cond.speaker_emb,
-        #        cond_prompt_speech_tokens=_cond.cond_prompt_speech_tokens,
-        #        emotion_adv=exaggeration * torch.ones(1, 1, 1, device=self.device),
-        #    )
 
         # Norm and tokenize text
         text = punc_norm(text)
         text_tokens = self.tokenizer.text_to_tokens(text).to(self.device)
 
         if cfg_weight > 0.0:
-            text_tokens = torch.cat([text_tokens, text_tokens], dim=0)  # Need two seqs for CFG
+            # More efficient tensor concatenation for CFG
+            text_tokens = text_tokens.repeat(2, 1)
 
         sot = self.t3.hp.start_text_token
         eot = self.t3.hp.stop_text_token
@@ -275,33 +253,12 @@ class ChatterboxTTS:
                 top_p=top_p,
             )
 
-            def speech_to_wav(speech_tokens):
-                # Extract only the conditional batch.
-                speech_tokens = speech_tokens[speech_tokens < 6561]
+            # Use existing drop_invalid_tokens from the module
+            speech_tokens = drop_invalid_tokens(speech_tokens)
 
-                # TODO: output becomes 1D
-                speech_tokens = drop_invalid_tokens(speech_tokens)
+            wav, _ = self.s3gen.inference(
+                speech_tokens=speech_tokens,
+                ref_dict=self.conds.gen,
+            )
 
-                def drop_bad_tokens(tokens):
-                    # Use torch.where instead of boolean indexing to avoid sync
-                    mask = tokens < 6561
-                    # Count valid tokens without transferring to CPU
-                    valid_count = torch.sum(mask).item()
-                    # Create output tensor of the right size
-                    result = torch.zeros(valid_count, dtype=tokens.dtype, device=tokens.device)
-                    # Use torch.masked_select which is more CUDA-friendly
-                    result = torch.masked_select(tokens, mask)
-                    return result
-
-                # speech_tokens = speech_tokens[speech_tokens < 6561]
-                speech_tokens = drop_bad_tokens(speech_tokens)
-                wav, _ = self.s3gen.inference(
-                    speech_tokens=speech_tokens,
-                    ref_dict=self.conds.gen,
-                )
-                #wav = wav.squeeze(0).detach().cpu().numpy()
-                #watermarked_wav = self.watermarker.apply_watermark(wav, sample_rate=self.sr)
-                #return torch.from_numpy(watermarked_wav).unsqueeze(0)
-                return wav
-
-            yield speech_to_wav(speech_tokens)
+            yield wav

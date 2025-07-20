@@ -29,6 +29,9 @@ some of these need more tweaking min_p , cfg, exaggeration, max_tokens, max_cach
 tried trimming silence from input wav but model seems very sensitive to the reference files.
 installer and start scripts seem to work
 
+Some odd sound artifacts in the output, not sure if they are from the model or the input files.
+especially with action lines like `*draws sword*`
+
 attempt at memory and disk cache for conditionals. not sure if they work right.
 
 incoming temp file are stored in `upload_temp` folder

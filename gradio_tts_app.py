@@ -151,6 +151,8 @@ def generate(model_state, text, audio_prompt_path,
         do_progress=do_progress,
         use_int16=True,
         as_wav=True,
+        enable_memory_cache=True,
+        enable_disk_cache=True,
     )
 
 

@@ -17,29 +17,57 @@ from src.util_functions import (save_torchaudio_wav, get_cache_key, get_cache_di
 if TYPE_CHECKING:
     from src.chatterbox.tts import ChatterboxTTS
 
+# GPU-only optimizations for PyTorch 2.7.1
+def enable_cuda_optimizations():
+    """Enable CUDA-specific optimizations for PyTorch 2.7.1"""
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required but not available")
+
+    # Enable cuDNN optimizations
+    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.allow_tf32 = True
+
+    # Enable Tensor Core optimizations
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = True
+
+    # Enable optimized attention (PyTorch 2.7.1)
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
+
+# Initialize optimizations on import
+enable_cuda_optimizations()
 
 def split_by_lines(prompt: str):
     prompts = re.split(r'(?<=[.?!])\s*(?![.\w"\'\d]|[,!]|\*)', prompt)
     prompts = [p.strip() for p in prompts if p.strip()]
     return prompts
 
-def get_best_device():
-    if torch.cuda.is_available():
-        return "cuda"
-    else:
-        return "cpu"
-
+def get_cuda_device():
+    """Get CUDA device - simplified for GPU-only usage"""
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required but not available")
+    return "cuda"
 
 def resolve_device(device):
-    return get_best_device() if device == "auto" else device
-
+    """Simplified device resolution - GPU only"""
+    if device == "auto" or device == "cuda":
+        return get_cuda_device()
+    else:
+        raise ValueError(f"Only CUDA devices supported, got: {device}")
 
 def resolve_dtype(dtype):
-    return {
+    """Optimized dtype resolution for CUDA"""
+    dtype_map = {
         "float32": torch.float32,
         "float16": torch.float16,
         "bfloat16": torch.bfloat16,
-    }[dtype]
+    }
+    if dtype not in dtype_map:
+        raise ValueError(f"Unsupported dtype: {dtype}")
+    return dtype_map[dtype]
 
 
 def t3_to(model: "ChatterboxTTS", dtype):
@@ -104,13 +132,9 @@ def remove_t3_compilation(model: "ChatterboxTTS"):
 
 
 @simple_manage_model_state("chatterbox")
-def get_model(model_name="just_a_placeholder",
-    device=torch.device("cuda"), dtype=torch.float32
-):
+def get_model(model_name="just_a_placeholder",device=torch.device("cuda"), dtype=torch.float32):
     from src.chatterbox.tts import ChatterboxTTS
-
     model = ChatterboxTTS.from_pretrained(device=device)
-    # having everything on float32 increases performance
     return chatterbox_tts_to(model, device, dtype)
 
 
@@ -126,24 +150,8 @@ def chatterbox_model(model_name, device="cuda", dtype=torch.float32):
         dtype=dtype,
     )
 
-    # use_autocast = dtype in [torch.float16, torch.bfloat16]
-
-    # with (
-    #     torch.autocast(device_type=device, dtype=dtype)
-    #     if use_autocast
-    #     else torch.no_grad()
-    # ):
     with torch.no_grad():
         yield model
-
-
-@contextmanager
-def cpu_offload_context(model, device, dtype, cpu_offload=False):
-    if cpu_offload:
-        chatterbox_tts_to(model, torch.device(device), dtype)
-    yield model
-    if cpu_offload:
-        chatterbox_tts_to(model, torch.device("cpu"), dtype)
 
 
 # Global in-memory cache for conditionals
@@ -168,84 +176,90 @@ def _save_conditionals_to_disk(cache_key, cond_cls):
     except Exception as e:
         print(f"Failed to save conditionals cache: {e}")
 
-def save_conditionals_cache(cache_key, cond_cls):
+def save_conditionals_cache(cache_key, cond_cls, enable_memory_cache=True, enable_disk_cache=True):
     """Save prepared conditionals to disk (non-blocking) and memory"""
     if cache_key is None:
         return
 
     try:
         # Save to memory cache (blocking, but fast)
-        with _cache_lock:
-            _conditionals_memory_cache[cache_key] = {
-                't3_dict': cond_cls.t3.__dict__.copy(),
-                'gen': cond_cls.gen
-            }
-            print(f"Saved conditionals to memory cache: {cache_key}")
+        if enable_memory_cache:
+            with _cache_lock:
+                _conditionals_memory_cache[cache_key] = {
+                    't3_dict': cond_cls.t3.__dict__.copy(),
+                    'gen': cond_cls.gen
+                }
+                print(f"Saved conditionals to memory cache: {cache_key}")
 
         # Save to disk (non-blocking)
-        threading.Thread(
-            target=_save_conditionals_to_disk,
-            args=(cache_key, cond_cls),
-            daemon=True
-        ).start()
+        if enable_disk_cache:
+            threading.Thread(
+                target=_save_conditionals_to_disk,
+                args=(cache_key, cond_cls),
+                daemon=True
+            ).start()
 
     except Exception as e:
         print(f"Failed to prepare conditionals cache: {e}")
 
 
-def load_conditionals_cache(cache_key, model, device, dtype):
+def load_conditionals_cache(cache_key, model, device, dtype, enable_memory_cache=True, enable_disk_cache=True):
     """Load prepared conditionals from memory or disk"""
     if cache_key is None:
         return None
 
     try:
         # Try memory cache first (fastest)
-        with _cache_lock:
-            if cache_key in _conditionals_memory_cache:
-                cache_data = _conditionals_memory_cache[cache_key]
+        if enable_memory_cache:
+            with _cache_lock:
+                if cache_key in _conditionals_memory_cache:
+                    cache_data = _conditionals_memory_cache[cache_key]
 
-                # Restore conditionals from dict
-                if 't3_dict' in cache_data and 'gen' in cache_data:
-                    # Recreate T3Cond from dict
-                    t3_cond = T3Cond(**cache_data['t3_dict'])
-                    t3_cond = t3_cond.to(device=device, dtype=dtype)
+                    # Restore conditionals from dict
+                    if 't3_dict' in cache_data and 'gen' in cache_data:
+                        # Recreate T3Cond from dict
+                        t3_cond = T3Cond(**cache_data['t3_dict'])
+                        t3_cond = t3_cond.to(device=device, dtype=dtype)
 
-                    # Create new Conditionals object
-                    conditionals = Conditionals(t3_cond, cache_data['gen'])
-                    model.set_conditionals(conditionals)
+                        # Create new Conditionals object
+                        conditionals = Conditionals(t3_cond, cache_data['gen'])
+                        model.set_conditionals(conditionals)
 
-                print(f"Loaded conditionals from memory cache: {cache_key}")
-                return True
+                    print(f"Loaded conditionals from memory cache: {cache_key}")
+                    return True
 
+        # Try disk cache if memory cache missed or is disabled
+        if enable_disk_cache:
+            cache_dir = get_cache_dir()
+            cache_file = cache_dir.joinpath(cache_key + ".pt")
 
+            if not cache_file.exists():
+                return None
 
-        cache_dir = get_cache_dir()
-        cache_file = cache_dir.joinpath(cache_key + ".pt")
+            with safe_globals([T3Cond]):
+                #cond_cls = Conditionals.load(cls=Conditionals,fpath=cache_file)
+                map_location = torch.device("cuda")
+                kwargs = torch.load(cache_file, map_location=map_location, weights_only=True)
+                cond_cls =  Conditionals(T3Cond(**kwargs['t3']), kwargs['gen'])
+            print(f"loaded cond {cond_cls.__sizeof__()}")
+            # Restore conditionals to model
+            if hasattr(cond_cls, 't3'):
+               model.set_conditionals(cond_cls)
+               print(f"set conditionals")
 
-        if not cache_file.exists():
-            return None
+            # Store in memory cache for next time (if memory cache is enabled)
+            if enable_memory_cache:
+                cache_dict = dict(
+                    t3=cond_cls.__dict__,
+                    gen=cond_cls.gen
+                )
+                with _cache_lock:
+                    _conditionals_memory_cache[cache_key] = cache_dict
 
-        with safe_globals([T3Cond]):
-            #cond_cls = Conditionals.load(cls=Conditionals,fpath=cache_file)
-            map_location = torch.device("cuda")
-            kwargs = torch.load(cache_file, map_location=map_location, weights_only=True)
-            cond_cls =  Conditionals(T3Cond(**kwargs['t3']), kwargs['gen'])
-        print(f"loaded cond {cond_cls.__sizeof__()}")
-        # Restore conditionals to model
-        if hasattr(cond_cls, 't3'):
-           model.set_conditionals(cond_cls)
-           print(f"set conditionals")
+            print(f"Loaded conditionals cache: {cache_key}")
+            return True
 
-        # Store in memory cache for next time
-        cache_dict = dict(
-            t3=cond_cls.__dict__,
-            gen=cond_cls.gen
-        )
-        with _cache_lock:
-            _conditionals_memory_cache[cache_key] = cache_dict
-
-        print(f"Loaded conditionals cache: {cache_key}")
-        return True
+        return None
 
     except Exception as e:
         import traceback
@@ -268,6 +282,9 @@ def _tts_generator(
     # hyperparameters
     chunked=False,
     cache_voice=False,
+    # caching control
+    enable_memory_cache=True,
+    enable_disk_cache=True,
     # streaming
     #tokens_per_slice=1000,
     #remove_milliseconds=100,
@@ -302,7 +319,7 @@ def _tts_generator(
         model_name=model_name,
         device=device,
         dtype=dtype,
-    ) as model, cpu_offload_context(model, device, dtype, cpu_offload)):
+    ) as model):
         progress(0.1, desc="Generating audio...")
 
         if use_compilation:
@@ -310,16 +327,17 @@ def _tts_generator(
         else:
             remove_t3_compilation(model)
 
-        # Enhanced conditional preparation with disk caching
+        # Enhanced conditional preparation with configurable caching
         if audio_prompt_path is not None:
             # Generate cache key
             cache_key = get_cache_key(audio_prompt_path, cache_uuid, exaggeration)
             conditionals_loaded = False
 
-            # Try to load from disk cache first
-            if cache_key and load_conditionals_cache(cache_key, model, device, dtype):
-                conditionals_loaded = True
-                progress(0.3, desc="Loaded cached conditionals...")
+            # Try to load from cache first (respecting cache flags)
+            if cache_key and (enable_memory_cache or enable_disk_cache):
+                if load_conditionals_cache(cache_key, model, device, dtype, enable_memory_cache, enable_disk_cache):
+                    conditionals_loaded = True
+                    progress(0.3, desc="Loaded cached conditionals...")
 
             # If not loaded from cache, prepare and optionally cache
             if not conditionals_loaded:
@@ -329,27 +347,31 @@ def _tts_generator(
                 if dtype != torch.float32:
                     model.conds.t3.to(dtype=dtype)
 
-                # Save to disk cache if we have a cache key
-                if cache_key:
-                    save_conditionals_cache(cache_key, model.conds)
+                # Save to cache if we have a cache key and caching is enabled
+                if cache_key and (enable_memory_cache or enable_disk_cache):
+                    save_conditionals_cache(cache_key, model.conds, enable_memory_cache, enable_disk_cache)
 
             # Update in-memory cache tracking
             if cache_voice:
                 model._cached_prompt_path = audio_prompt_path
 
         def generate_chunk(text):
+            high_priority_stream = torch.cuda.Stream(priority=-1)
+
             print(f"Generating chunk: {text}")
-            yield from model.generate(
-                text,
-                exaggeration=exaggeration,
-                cfg_weight=cfgw,
-                temperature=temperature,
-                max_new_tokens=max_new_tokens,
-                max_cache_len=max_cache_len,
-                repetition_penalty=repetition_penalty,
-                min_p=min_p,
-                top_p=top_p,
-            )
+
+            with torch.cuda.stream(high_priority_stream):
+                yield from model.generate(
+                    text,
+                    exaggeration=exaggeration,
+                    cfg_weight=cfgw,
+                    temperature=temperature,
+                    max_new_tokens=max_new_tokens,
+                    max_cache_len=max_cache_len,
+                    repetition_penalty=repetition_penalty,
+                    min_p=min_p,
+                    top_p=top_p,
+                )
 
         texts = (
             split_by_lines(text)
@@ -423,43 +445,17 @@ def tts(*args, use_int16=False, as_wav=False, **kwargs):
                   wav_tensors[0].is_cuda)
         # Optimized concatenation and conversion based on device
         with torch.no_grad():
-            if use_gpu and len(wav_tensors) > 1:
-                # GPU-based concatenation
-                full_wav_tensor = torch.cat(wav_tensors, dim=0)
+            # Concatenate on GPU
+            full_wav_tensor = torch.cat(wav_tensors, dim=0) if len(wav_tensors) > 1 else wav_tensors[0]
 
-                # Handle int16 conversion on GPU if needed
-                if use_int16 or as_wav:
-                    # Convert to int16 on GPU
-                    full_wav_int16_tensor = (full_wav_tensor * 32767).to(torch.int16)
-                    full_wav_int16 = full_wav_int16_tensor.cpu().numpy()
-                else:
-                    full_wav = full_wav_tensor.cpu().numpy()
+            if use_int16:
+                full_wav_tensor = (full_wav_tensor * 32767).to(torch.int16)
 
-            elif use_gpu and len(wav_tensors) == 1:
-                # Single tensor on GPU
-                full_wav_tensor = wav_tensors[0]
-
-                # Handle int16 conversion on GPU if needed
-                if use_int16 or as_wav:
-                    full_wav_int16_tensor = (full_wav_tensor * 32767).to(torch.int16)
-                    full_wav_int16 = full_wav_int16_tensor.cpu().numpy()
-                else:
-                    full_wav = full_wav_tensor.cpu().numpy()
+            if as_wav:
+                wav_out = full_wav_tensor.unsqueeze(0).cpu()
             else:
-                # CPU fallback - convert tensors to numpy first, then concatenate
-                wav_arrays = [t.cpu().numpy() if torch.is_tensor(t) else t for t in wav_tensors]
-                full_wav = np.concatenate(wav_arrays, axis=0) if len(wav_arrays) > 1 else wav_arrays[0]
+                wav_out = full_wav_tensor.cpu()
 
-                # Handle int16 conversion on CPU if needed
-                if use_int16 or as_wav:
-                    full_wav_int16 = (full_wav * 32767).astype(np.int16)
-
-
-        if use_int16 or as_wav:
-            wav_out = full_wav_int16
-        else:
-            wav_out = full_wav
-#
 
         # Calculate timing and performance metrics
         end_time = time.time()
@@ -470,7 +466,7 @@ def tts(*args, use_int16=False, as_wav=False, **kwargs):
         print(f"  generation_time time: {generation_time:.2f}s  Speed ratio: {speed_ratio:.2f}x (audio_length/execution_time)")
 
         if as_wav:
-            return save_torchaudio_wav(torch.from_numpy(wav_out).unsqueeze(0),sr, audio_path=kwargs.get('audio_prompt_path'), uuid=kwargs.get('cache_uuid', -1))
+            return save_torchaudio_wav(wav_out ,sr, audio_path=kwargs.get('audio_prompt_path'), uuid=kwargs.get('cache_uuid', -1))
         else:
             return sr, wav_out
 

@@ -6,6 +6,7 @@ import librosa
 import numpy as np
 import torch
 import torch.nn.functional as F
+import noisereduce
 from numpy.lib.stride_tricks import as_strided
 from torch import nn, Tensor
 
@@ -262,6 +263,8 @@ class VoiceEncoder(nn.Module):
                 librosa.resample(wav, orig_sr=sample_rate, target_sr=self.hp.sample_rate, res_type="kaiser_fast")
                 for wav in wavs
             ]
+
+        wavs = [noisereduce.reduce_noise(y=wav, sr=self.hp.sample_rate, stationary=True, prop_decrease=0.75) for wav in wavs]
 
         if trim_top_db:
             wavs = [librosa.effects.trim(wav, top_db=trim_top_db)[0] for wav in wavs]
