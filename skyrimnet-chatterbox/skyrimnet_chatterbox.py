@@ -255,7 +255,6 @@ def generate_audio(
         repetition_penalty=inference_kwargs['repetition_penalty'],
     )
     wavout_path = Path(wavout).relative_to(START_DIRECTORY.parent)
-    logger.debug(f"Generated audio file at: {wavout_path} for job_id: {job_id}")
     return wavout_path, job_id
 with gr.Blocks() as demo:
     
