@@ -44,11 +44,12 @@ syn_out/
 checkpoints/
 .gradio
 
-
+# Ignore generated sample .wav files
+**/*.wav
 /.venv
-/.idea
-/src/chatterbox - Copy
-/conditionals
-/.env_win
+/profile_logs
 /.idea
 /cache
+memory.json
+/models
+/archive
