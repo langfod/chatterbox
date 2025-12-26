@@ -1,22 +1,13 @@
 from argparse import ArgumentParser
 from pathlib import Path
 import random
-import os
 from time import perf_counter_ns
-
-# CRITICAL: Set CUDA environment variables BEFORE importing torch
-# This helps with CUDA context sharing across threads in Gradio
-os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
 
 import gradio as gr
 from loguru import logger
 import numpy as np
 import torch
 
-# Enable CUDA lazy loading for better thread compatibility
-torch.backends.cuda.enable_flash_sdp(True)
-torch.backends.cuda.enable_mem_efficient_sdp(True)
 
 try:
     from cache_utils import (
@@ -50,6 +41,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
 MODEL = None
 MULTILINGUAL = False
+TURBO = False
 IGNORE_PING = None
 SILENCE_AUDIO_PATH = "assets/silence_100ms.wav"
 # Cache flags - defaults that can be overridden by skyrimnet_config.txt
@@ -70,9 +62,15 @@ def set_seed(seed: int):
 
 
 def load_model():
-    global MODEL, MULTILINGUAL
+    global MODEL, MULTILINGUAL, TURBO
     if MODEL is None:
-        if MULTILINGUAL:
+        if TURBO:
+            logger.info("Loading Turbo Model")
+            try:
+                from chatterbox.tts_turbo import ChatterboxTurboTTS as Chatterbox
+            except ImportError:
+                from .chatterbox.tts_turbo import ChatterboxTurboTTS as Chatterbox
+        elif MULTILINGUAL:
             logger.info("Loading Multilingual Model")
             try:
                 from chatterbox.mtl_tts import ChatterboxMultilingualTTS as Chatterbox
@@ -91,33 +89,14 @@ def load_model():
     return MODEL
 
 
-def generate(text, language_id="en", audio_prompt_path=None, exaggeration=0.5, temperature=0.8, seed_num=0, cfgw=0, min_p=0.05, top_p=1.0, repetition_penalty=1.2):
-    """Generate TTS audio using the global MODEL.
-    
-    Note: We intentionally use a global model instead of accepting it as a parameter
-    because Gradio's gr.State serializes/pickles models, which destroys CUDA graphs
-    and torch.compile optimizations, causing ~160x performance degradation.
-    """
-    global MODEL, MULTILINGUAL
-    
-    # CRITICAL: Ensure CUDA context is properly set for this thread
-    # Gradio runs requests in worker threads, and CUDA contexts are thread-local.
-    # We need to explicitly set the device to ensure proper CUDA context initialization.
-    if DEVICE == "cuda":
-        torch.cuda.set_device(0)
-        # Force CUDA context initialization in this thread with a small operation
-        _ = torch.zeros(1, device="cuda")
+def generate(model, text,  language_id="en",audio_prompt_path=None, exaggeration=0.5, temperature=0.8, seed_num=0, cfgw=0, min_p=0.05, top_p=1.0, repetition_penalty=1.2, disable_tqdm=False):
+    global MODEL, MULTILINGUAL, TURBO
     
     language_id = validate_language_id(language_id, SUPPORTED_LANGUAGE_CODES)
 
-    # DIAGNOSTIC: Log model state
-    logger.info(f"[DIAG] MODEL global is None: {MODEL is None}")
-    if MODEL is not None:
-        logger.info(f"[DIAG] MODEL device: {MODEL.device}, dtype: {MODEL.t3.dtype if hasattr(MODEL, 't3') else 'N/A'}")
-        logger.info(f"[DIAG] MODEL compiled: {MODEL.t3.compiled if hasattr(MODEL.t3, 'compiled') else 'N/A'}")
     
-    logger.info(f'generate called for: "{text}", {Path(audio_prompt_path).stem if audio_prompt_path else "No ref audio"}, exaggeration: {exaggeration}')  
-    logger.info(f"Parameters - temp: {temperature}, min_p: {min_p}, top_p: {top_p}, rep_penalty: {repetition_penalty}, cfg_weight: {cfgw}")
+    logger.info(f'generate called for: "{text}", {Path(audio_prompt_path).stem if audio_prompt_path else "No ref audio"}')  
+    #logger.info(f"Parameters - temp: {temperature}, min_p: {min_p}, top_p: {top_p}, rep_penalty: {repetition_penalty}, cfg_weight: {cfgw}, exaggeration: {exaggeration}")
 
     enable_memory_cache = ENABLE_MEMORY_CACHE
     enable_disk_cache = ENABLE_DISK_CACHE
@@ -125,17 +104,19 @@ def generate(text, language_id="en", audio_prompt_path=None, exaggeration=0.5, t
     dtype = DTYPE
 
     # Check if we need to switch to multilingual model
-    if not language_id.startswith("en") and not MULTILINGUAL:
+    if not language_id.startswith("en") and not MULTILINGUAL and not TURBO:
         logger.info(f"Non-English language '{language_id}' detected, switching to multilingual model")
         MULTILINGUAL = True
+        TURBO = False
         MODEL = None
     
-    # IMPORTANT: Always use the global MODEL, never the Gradio state model parameter
-    # Gradio's gr.State can serialize/pickle models, which destroys CUDA graphs and compiled functions
-    # This causes ~160x slowdown (600s vs 3.7s) when the pickled model falls back to eager mode
-    if MODEL is None:
-        load_model()
-    model = MODEL  # Always use the global model with intact CUDA optimizations
+    # Turbo doesn't support multilingual
+    if TURBO and not language_id.startswith("en"):
+        logger.warning(f"Turbo model only supports English. Switching language to 'en' from '{language_id}'")
+        language_id = "en"
+    
+    if MODEL is None or model is None:
+        model = load_model()
 
 
     exaggeration = float(exaggeration)
@@ -159,20 +140,9 @@ def generate(text, language_id="en", audio_prompt_path=None, exaggeration=0.5, t
                 safe_conditional_to_dtype(model, dtype)
             if cache_key and (enable_memory_cache or enable_disk_cache):
                 save_conditionals_cache(language_id, cache_key, model.conds, enable_memory_cache, enable_disk_cache)
-    conditional_start_time = perf_counter_ns()
-    logger.info(f"Conditionals prepared. Time: {(conditional_start_time - func_start_time) / 1_000_000:.4f}ms")
-    
-    # Debug: Check model and conditionals state before generation
-    logger.info(f"[DEBUG] model.t3.device: {model.t3.device}, model.t3.dtype: {model.t3.dtype}")
-    logger.info(f"[DEBUG] model.t3.compiled: {model.t3.compiled}")
-    if hasattr(model.t3, 'cudagraph_wrapper'):
-        logger.info(f"[DEBUG] CUDA graph wrapper exists")
-    else:
-        logger.info(f"[DEBUG] NO CUDA graph wrapper yet")
-    if model.conds is not None:
-        logger.info(f"[DEBUG] conds.t3.speaker_emb dtype: {model.conds.t3.speaker_emb.dtype}, device: {model.conds.t3.speaker_emb.device}")
-    
-    generate_start_time = perf_counter_ns()
+    #conditional_start_time = perf_counter_ns()
+    #logger.info(f"Conditionals prepared. Time: {(conditional_start_time - func_start_time) / 1_000_000:.4f}ms")
+    #generate_start_time = perf_counter_ns()
     
     t3_params={
         #"initial_forward_pass_backend": "eager", # slower - default
@@ -183,10 +153,13 @@ def generate(text, language_id="en", audio_prompt_path=None, exaggeration=0.5, t
         # "generate_token_backend": "inductor",
         # "generate_token_backend": "inductor-strided",
         #"generate_token_backend": "cudagraphs-strided",
-        "stride_length": 4, # "strided" options compile <1-2-3-4> iteration steps together, which improves performance by reducing memory copying issues in torch.compile
+        #"stride_length": 4, # "strided" options compile <1-2-3-4> iteration steps together, which improves performance by reducing memory copying issues in torch.compile
         "skip_when_1": True, # skips Top P when it's set to 1.0
-        #"benchmark_t3": True, # Synchronizes CUDA to get the real it/s 
+        "benchmark": False, # Synchronizes CUDA to get the real it/s 
     }
+    if TURBO:
+        t3_params["generate_token_backend"] = "reduce-overhead"
+
     generate_args={
         "text": text,
         "exaggeration": exaggeration,
@@ -196,15 +169,17 @@ def generate(text, language_id="en", audio_prompt_path=None, exaggeration=0.5, t
         "top_p": top_p,
         "repetition_penalty": repetition_penalty,
         "t3_params": t3_params,
+        "disable_tqdm": disable_tqdm,
     }
+
     if MULTILINGUAL:
         generate_args["language_id"] = language_id
-
+    
     wav = model.generate(
         **generate_args
     )
 
-    logger.info(f"Generation completed. Time: {(perf_counter_ns() - generate_start_time) / 1_000_000_000:.2f}s")
+    #logger.info(f"Generation completed. Time: {(perf_counter_ns() - generate_start_time) / 1_000_000_000:.2f}s")
     # Log execution time
     func_end_time = perf_counter_ns()
 
@@ -212,13 +187,10 @@ def generate(text, language_id="en", audio_prompt_path=None, exaggeration=0.5, t
     wav_length = wav.shape[-1]   / model.sr
 
     logger.info(f"Generated audio: {wav_length:.2f}s {model.sr/1000:.2f}kHz in {total_duration_s:.2f}s. Speed: {wav_length / total_duration_s:.2f}x")
-    wave_file = str(save_torchaudio_wav(wav, model.sr, audio_path=audio_prompt_path))
-    print(f"Saved generated audio to: {wave_file}")
+    wave_file = str(save_torchaudio_wav(wav.cpu(), model.sr, audio_path=audio_prompt_path))
     del wav
     torch.cuda.empty_cache()
     return wave_file
-
-    #return (model.sr, wav.squeeze(0).cpu().numpy())
 
 
 ### SkyrimNet Zonos Emulated   
@@ -297,15 +269,14 @@ def generate_audio(
         min_p=inference_kwargs['min_p'],
         top_p=inference_kwargs['top_p'],
         repetition_penalty=inference_kwargs['repetition_penalty'],
+        disable_tqdm=True
     )
     wavout_path = Path(wavout).relative_to(START_DIRECTORY.parent)
     return wavout_path, job_id
 with gr.Blocks() as demo:
     
     gr.set_static_paths(["assets", "cache"])
-    # Note: We no longer use gr.State for the model as it caused severe performance issues
-    # Gradio's State serializes/pickles the model, destroying CUDA graphs and compiled functions
-    # The model is now accessed directly via the global MODEL variable
+    model_state = gr.State(None)  # Loaded once per session/user
 
     with gr.Row():
         with gr.Column():
@@ -354,12 +325,12 @@ with gr.Blocks() as demo:
         with gr.Column():
             audio_output = gr.Audio(label="Output Audio", type="filepath", autoplay=True)
 
-    # Load model at startup (no state output needed)
-    demo.load(fn=load_model, inputs=[], outputs=[])
+    demo.load(fn=load_model, inputs=[], outputs=model_state)
 
     run_btn.click(
         fn=generate,
         inputs=[
+            model_state,
             text,
             language_id,
             ref_wav,
@@ -392,9 +363,9 @@ with gr.Blocks() as demo:
     dnsmos = gr.Number(visible=False)
     speaker_noised_checkbox = gr.Checkbox(visible=False)
     cfg_scale = gr.Number(visible=False)
-    hidden_top_p = gr.Number(visible=False)
+    top_p = gr.Number(visible=False)
     min_k = gr.Number(visible=False)
-    hidden_min_p = gr.Number(visible=False)
+    min_p = gr.Number(visible=False)
     linear = gr.Number(visible=False)
     confidence = gr.Number(visible=False)
     quadratic = gr.Number(visible=False)
@@ -422,9 +393,9 @@ with gr.Blocks() as demo:
         dnsmos,
         speaker_noised_checkbox,
         cfg_scale,
-        hidden_top_p,
+        top_p,
         min_k,
-        hidden_min_p,
+        min_p,
         linear,
         confidence,
         quadratic,
@@ -444,6 +415,7 @@ def parse_arguments():
     parser.add_argument("--port", type=int, required=False, default=7860, help="Port to run the server on (default: 7860)")
     parser.add_argument("--inbrowser", action='store_true', help="Open the UI in a new browser window")
     parser.add_argument("--multilingual", action='store_true', default=False, help="Use the multilingual model (requires more VRAM)")
+    parser.add_argument("--turbo", action='store_true', default=False, help="Use the turbo model (faster, English only)")
     parser.add_argument("--clearoutput", action='store_true', help="Remove all folders in audio output directory and exit")
     parser.add_argument("--clearcache", action='store_true', help="Remove all .pt cache files and exit")
     return parser.parse_args()
@@ -465,24 +437,22 @@ if __name__ == "__main__":
         logger.info(f"Cleared {count} cache files. Exiting.")
         exit(0)
     
+    # Validate mutually exclusive options
+    if args.multilingual and args.turbo:
+        logger.error("Cannot use both --multilingual and --turbo flags together. Turbo only supports English.")
+        exit(1)
+    
     MULTILINGUAL = args.multilingual
+    TURBO = args.turbo
     set_seed(20250527)
     model = load_model()
     
     # Determine supported languages based on model type
-    # handle keyboard interrupt gracefully ctrl-c
-    try:
-        import signal
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-    except ImportError:
-        pass
- 
-    # CRITICAL: Disable Gradio's default threading/queuing
-    # Gradio's queue runs inference in worker threads, but CUDA contexts are thread-local.
-    # When the model is loaded in the main thread but inference runs in a worker thread,
-    # CUDA operations become 100-200x slower due to context synchronization overhead.
-    # By not using .queue(), inference runs in the main thread where CUDA was initialized.
-    demo.launch(
+
+    demo.queue(
+        max_size=50,
+        default_concurrency_limit=1,
+    ).launch(
         server_name=args.server, 
         server_port=args.port, 
         share=args.share, 

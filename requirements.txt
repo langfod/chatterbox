@@ -1,8 +1,9 @@
 #PYTORCH*********************************************************************
---extra-index-url=https://download.pytorch.org/whl/cu129
-torch<2.9
+--extra-index-url=https://download.pytorch.org/whl/cu128
+#--pre --extra-index-url=https://download.pytorch.org/whl/nightly/cu128
+torch #<2.9
 torchaudio
-triton-windows
+triton-windows<3.6 #<3.5
 
 scipy
 numpy
@@ -15,7 +16,7 @@ transformers
 huggingface_hub
 hf-xet
 diffusers
-omegaconf
+#omegaconf
 conformer
 safetensors
 
@@ -33,3 +34,4 @@ gradio
 #dicta_onnx # For Hebrew diacritics
 spacy_pkuseg # For Chinese segmentation
 pykakasi # For Japanese text normalization
+soxr

@@ -15,10 +15,12 @@ from torch.serialization import safe_globals
 
 try:
     from chatterbox.models.t3.modules.cond_enc import T3Cond
-    from chatterbox.tts import Conditionals
+    from chatterbox.conditionals import Conditionals
+    from chatterbox.shared_audio_utils import save_tensor_as_wav
 except ImportError:
     from .chatterbox.models.t3.modules.cond_enc import T3Cond
-    from .chatterbox.tts import Conditionals
+    from .chatterbox.conditionals import Conditionals
+    from .chatterbox.shared_audio_utils import save_tensor_as_wav
 
 CACHE_DIR = Path("cache")
 WAV_OUTPUT_DIR = CACHE_DIR.joinpath("audio_output")
@@ -163,8 +165,8 @@ def load_conditionals_cache(language: str="en", cache_key: str=None, model=None,
                 cached = _move_conditionals_to_device_dtype(cached, device, dtype)
                 
                 # Log dtypes for debugging
-                if hasattr(cached, 't3') and cached.t3 is not None:
-                    logger.debug(f"[CACHE] After dtype fix - speaker_emb: {cached.t3.speaker_emb.dtype}, emotion_adv: {cached.t3.emotion_adv.dtype if cached.t3.emotion_adv is not None else 'None'}")
+                #if hasattr(cached, 't3') and cached.t3 is not None:
+                #    logger.debug(f"[CACHE] After dtype fix - speaker_emb: {cached.t3.speaker_emb.dtype}, emotion_adv: {cached.t3.emotion_adv.dtype if cached.t3.emotion_adv is not None else 'None'}")
                 
                 model.set_conditionals(cached)
                 logger.info(f"Conditionals from cache: {language}/{cache_key}")
@@ -285,7 +287,8 @@ def save_torchaudio_wav(wav_tensor, sr, audio_path):
     path = get_wavout_dir() / f"{filename}.wav"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        torchaudio.save(path, wav_tensor.cpu(), sr, encoding="PCM_S")
+        save_tensor_as_wav(wav_tensor.cpu(), path, sr, n_channels=1, sampwidth=2)
+        #torchaudio.save(path, wav_tensor.cpu(), sr, encoding="PCM_S")
     return path.resolve()
 
 def init_conditional_memory_cache(model, device, dtype, supported_languages: List[str] = ["en"]) -> None:

@@ -30,6 +30,17 @@ class T3HuggingfaceBackend(LlamaPreTrainedModel, GenerationMixin):
         self._added_cond = False
         self.alignment_stream_analyzer = alignment_stream_analyzer
 
+    @property
+    def dtype(self) -> torch.dtype:
+        """
+        Return the actual dtype of the model weights.
+        
+        Overrides the parent class property which may not accurately reflect
+        the dtype after converting model weights to bfloat16/float16.
+        """
+        # Use the speech_head linear layer weights as the source of truth
+        return self.speech_head.weight.dtype
+
     @torch.inference_mode()
     def prepare_inputs_for_generation(
         self, input_ids: torch.Tensor, decoder_cond: torch.Tensor, use_cache: bool, past_key_values=None,

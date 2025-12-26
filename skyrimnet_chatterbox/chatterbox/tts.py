@@ -1,11 +1,10 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 from huggingface_hub import hf_hub_download
-from safetensors.torch import load_file
 
 import torch
 
+from .conditionals import Conditionals
 from .models.t3 import T3
 from .models.s3tokenizer import S3_SR, drop_invalid_tokens
 from .models.s3gen import S3GEN_SR, S3Gen
@@ -21,7 +20,6 @@ from .tensor_utils import (
 from .shared_utils import (
     check_mps_availability,
     validate_audio_file,
-    load_and_preprocess_audio,
     drop_bad_tokens,
     prepare_text_tokens,
     punc_norm,
@@ -34,77 +32,10 @@ from .shared_utils import (
     estimate_token_count,
     concatenate_audio_tensors
 )
+from .shared_audio_utils import load_and_preprocess_audio
 
 
 REPO_ID = "ResembleAI/chatterbox"
-
-
-@dataclass
-class Conditionals:
-    """
-    Conditionals for T3 and S3Gen
-    - T3 conditionals:
-        - speaker_emb
-        - clap_emb
-        - cond_prompt_speech_tokens
-        - cond_prompt_speech_emb
-        - emotion_adv
-    - S3Gen conditionals:
-        - prompt_token
-        - prompt_token_len
-        - prompt_feat
-        - prompt_feat_len
-        - embedding
-    """
-    t3: T3Cond
-    gen: dict
-
-    def to(self, device):
-        self.t3 = self.t3.to(device=device)
-        for k, v in self.gen.items():
-            self.gen[k] = v.to(device) if torch.is_tensor(v) else v
-        return self
-
-    def clone(self):
-        """Create a deep copy of the Conditionals object with proper tensor cloning"""
-        # Clone T3Cond - create new instance with cloned tensors
-        t3_clone = T3Cond(
-            speaker_emb=self.t3.speaker_emb.clone().detach() if self.t3.speaker_emb is not None else None,
-            clap_emb=self.t3.clap_emb.clone().detach() if hasattr(self.t3, 'clap_emb') and self.t3.clap_emb is not None else None,
-            cond_prompt_speech_tokens=self.t3.cond_prompt_speech_tokens.clone().detach() if self.t3.cond_prompt_speech_tokens is not None else None,
-            cond_prompt_speech_emb=self.t3.cond_prompt_speech_emb.clone().detach() if hasattr(self.t3, 'cond_prompt_speech_emb') and self.t3.cond_prompt_speech_emb is not None else None,
-            emotion_adv=self.t3.emotion_adv.clone().detach() if self.t3.emotion_adv is not None else None
-        )
-        
-        # Clone gen dict with proper tensor handling
-        gen_clone = {}
-        for k, v in self.gen.items():
-            if torch.is_tensor(v):
-                gen_clone[k] = v.clone().detach()
-            elif isinstance(v, (list, tuple)):
-                # Handle list/tuple of tensors
-                gen_clone[k] = type(v)(
-                    item.clone().detach() if torch.is_tensor(item) else item 
-                    for item in v
-                )
-            else:
-                # For non-tensor values, use regular copy
-                gen_clone[k] = v
-        
-        return Conditionals(t3=t3_clone, gen=gen_clone)
-
-    def save(self, fpath: Path):
-        arg_dict = dict(
-            t3=self.t3.__dict__,
-            gen=self.gen
-        )
-        torch.save(arg_dict, fpath)
-
-    @classmethod
-    def load(cls, fpath, map_location="cpu"):
-        states = torch.load(fpath, map_location=map_location)
-        t3 = T3Cond(**states["t3"])  # type: ignore[arg-type]
-        return cls(t3=t3, gen=states["gen"])  # type: ignore[arg-type]
 
 
 class ChatterboxTTS:
@@ -222,6 +153,7 @@ class ChatterboxTTS:
         repetition_penalty=1.2,
         min_p=0.05,
         top_p=1.0,
+        disable_tqdm=False,
         t3_params={},
     ):
         # Validate inputs using shared utilities
@@ -270,7 +202,7 @@ class ChatterboxTTS:
             # Text is small enough - process normally without chunking
             return self._generate_single_chunk(
                 text, cfg_weight, max_new_tokens, temperature, 
-                max_cache_len, repetition_penalty, min_p, top_p, t3_params
+                max_cache_len, repetition_penalty, min_p, top_p, disable_tqdm=disable_tqdm, t3_params=t3_params
             )
         else:
             # Text is too large - split into chunks and process separately
@@ -290,7 +222,7 @@ class ChatterboxTTS:
                 
                 chunk_audio = self._generate_single_chunk(
                     chunk, cfg_weight, max_new_tokens, temperature,
-                    max_cache_len, repetition_penalty, min_p, top_p, t3_params
+                    max_cache_len, repetition_penalty, min_p, top_p, disable_tqdm=disable_tqdm, t3_params=t3_params
                 )
                 audio_chunks.append(chunk_audio)
             
@@ -307,6 +239,7 @@ class ChatterboxTTS:
         repetition_penalty, 
         min_p, 
         top_p, 
+        disable_tqdm,
         t3_params
     ):
         """Generate audio for a single text chunk."""
@@ -331,6 +264,7 @@ class ChatterboxTTS:
                 repetition_penalty=repetition_penalty,
                 min_p=min_p,
                 top_p=top_p,
+                disable_tqdm=disable_tqdm,
                 **t3_params,
             )
 
