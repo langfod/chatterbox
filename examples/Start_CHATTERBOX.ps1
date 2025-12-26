@@ -93,7 +93,7 @@ Get-Content "$env:temp\vcvars.txt" | Foreach-Object {
 Write-Host "`nAttempting to start SkyrimNet CHATTERBOX..." -ForegroundColor Green
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$exePath = Join-Path $scriptRoot 'skyrimnet-chatterbox.exe'
+$exePath = Join-Path $scriptRoot 'skyrimnet_chatterbox.exe'
 
 
     if (!$exePath) {
@@ -112,9 +112,9 @@ if ($multilingual) {
 
 # Start a new PowerShell window, set the console title, and run the python module inside it.
 if ($exeArgs) {
-    Write-Host "Starting new PowerShell window to run: $pythonPath -m skyrimnet-chatterbox $exeArgs"
+    Write-Host "Starting new PowerShell window to run: $pythonPath -m skyrimnet_chatterbox $exeArgs"
 } else {
-    Write-Host "Starting new PowerShell window to run: $pythonPath -m skyrimnet-chatterbox"
+    Write-Host "Starting new PowerShell window to run: $pythonPath -m skyrimnet_chatterbox"
 }
 
 # Build the command to run inside the new PowerShell instance. Escape $Host so it's evaluated by the child PowerShell.
@@ -131,5 +131,5 @@ try {
 }
 
 Write-Host "`nSkyrimNet CHATTERBOX should start in another window. Default web server is http://localhost:7860" -ForegroundColor Green
-Write-Host "If that window closes immediately, run '.venv\Scripts\python -m skyrimnet-chatterbox' to capture errors." -ForegroundColor Yellow
+Write-Host "If that window closes immediately, run '.venv\Scripts\python -m skyrimnet_chatterbox' to capture errors." -ForegroundColor Yellow
 Any_Key_Wait -msg "Otherwise, you may close this window if it does not close itself.`n" -wait_sec 20

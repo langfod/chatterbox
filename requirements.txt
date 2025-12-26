@@ -2,12 +2,14 @@
 --extra-index-url=https://download.pytorch.org/whl/cu129
 torch<2.9
 torchaudio
+triton-windows
 
 scipy
 numpy
 
 soundfile
 s3tokenizer
+setuptools<81.0
 
 transformers
 huggingface_hub
@@ -19,12 +21,15 @@ safetensors
 
 psutil
 loguru
+# web stuff
+python-multipart
+fastapi
+uvicorn
+pydub-ng
 gradio
-setuptools<81.0
 
 #For multilingual TTS
 #russian-text-stresser @ git+https://github.com/Vuizur/add-stress-to-epub # For Russian text stress
 #dicta_onnx # For Hebrew diacritics
 spacy_pkuseg # For Chinese segmentation
 pykakasi # For Japanese text normalization
-pydub-ng

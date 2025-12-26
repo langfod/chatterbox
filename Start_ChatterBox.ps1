@@ -101,7 +101,7 @@ if (Test-Path $venvPython) {
 }
 
 # Script to run (relative to repo root)
-$scriptToRun = '-m skyrimnet-chatterbox'
+$scriptToRun = '-m skyrimnet_chatterbox'
 
 # Build Python script arguments
 $pythonArgs = ""

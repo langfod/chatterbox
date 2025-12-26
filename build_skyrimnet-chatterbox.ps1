@@ -29,7 +29,7 @@ if (-not $nobuild -or $noclean) {
     Write-Host "Starting build process..."
     if ($noclean) {
         Write-Host "Skipping clean step as per -noclean flag."
-        Start-Process -FilePath "pyinstaller" -ArgumentList "--noconfirm", "--log-level=ERROR", "skyrimnet-chatterbox.spec" -Wait -NoNewWindow
+        Start-Process -FilePath "pyinstaller" -ArgumentList "--noconfirm", "--log-level=ERROR", "skyrimnet_chatterbox.spec" -Wait -NoNewWindow
     }
     else {
         if (Test-Path "build") {
@@ -41,9 +41,9 @@ if (-not $nobuild -or $noclean) {
         if (Test-Path "__pycache__") {
             Remove-Item -Path "__pycache__" -Recurse -Force
         }
-        # remove all "__pycache__" folders under skyrimnet-chatterbox recursively
-        Get-ChildItem -Path "skyrimnet-chatterbox" -Recurse -Directory | Where-Object { $_.Name -eq "__pycache__" } | Remove-Item -Recurse -Force
-        Start-Process -FilePath "pyinstaller" -ArgumentList "--clean", "--noconfirm", "--log-level=ERROR", "skyrimnet-chatterbox.spec" -Wait -NoNewWindow
+        # remove all "__pycache__" folders under skyrimnet_chatterbox recursively
+        Get-ChildItem -Path "skyrimnet_chatterbox" -Recurse -Directory | Where-Object { $_.Name -eq "__pycache__" } | Remove-Item -Recurse -Force
+        Start-Process -FilePath "pyinstaller" -ArgumentList "--clean", "--noconfirm", "--log-level=ERROR", "skyrimnet_chatterbox.spec" -Wait -NoNewWindow
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed. Exiting."
@@ -54,25 +54,25 @@ if (-not $nobuild -or $noclean) {
 
 if ($test) {
     Write-Host "Running in test mode: Archive will be created but not deployed."
-    if (-not (Test-Path "dist\skyrimnet-chatterbox\skyrimnet-chatterbox.exe")) {
+    if (-not (Test-Path "dist\skyrimnet_chatterbox\skyrimnet_chatterbox.exe")) {
         Write-Host "Error: Executable not found. Please build the project first."
         exit 1
     }
 
-    Copy-Item -Path "models" -Destination "dist\skyrimnet-chatterbox\" -Force -Recurse
-    Copy-Item -Path "assets" -Destination "dist\skyrimnet-chatterbox\" -Force -Recurse
-    Copy-Item -Path "skyrimnet_config.txt" -Destination "dist\skyrimnet-chatterbox\" -Force -Recurse
-    Copy-Item -Path "examples\Start.bat" -Destination "dist\skyrimnet-chatterbox\" -Force -Recurse
-    Copy-Item -Path "examples\Start_CHATTERBOX.ps1" -Destination "dist\skyrimnet-chatterbox\" -Force -Recurse
+    Copy-Item -Path "models" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
+    Copy-Item -Path "assets" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
+    Copy-Item -Path "skyrimnet_config.txt" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
+    Copy-Item -Path "examples\Start.bat" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
+    Copy-Item -Path "examples\Start_CHATTERBOX.ps1" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
 
 
-    Set-Location -Path ./dist/skyrimnet-chatterbox
+    Set-Location -Path ./dist/skyrimnet_chatterbox
     Start-Process -FilePath "./Start.bat" -ArgumentList "-server", "localhost", "-port", "7860" -Wait -NoNewWindow
     Set-Location -Path ../..
 }
 else {
     Write-Host "Running in deployment mode: Archive will be created and deployed."
-    if (-not (Test-Path "dist\skyrimnet-chatterbox\skyrimnet-chatterbox.exe")) {
+    if (-not (Test-Path "dist\skyrimnet_chatterbox\skyrimnet_chatterbox.exe")) {
         Write-Host "Error: Executable not found. Please build the project first."
         exit 1
     }
@@ -90,8 +90,8 @@ else {
     Copy-Item -Path "README.md" -Destination "archive/$PACKAGE_NAME\" -Force  
     Copy-Item -Path "examples\Start.bat" -Destination "archive/$PACKAGE_NAME\" -Force
     Copy-Item -Path "examples\Start_CHATTERBOX.ps1" -Destination "archive/$PACKAGE_NAME\" -Force
-    Copy-Item -Path "dist\skyrimnet-chatterbox\skyrimnet-chatterbox.exe" -Destination "archive/$PACKAGE_NAME\" -Force
-    Copy-Item -Path "dist\skyrimnet-chatterbox\_internal" -Destination "archive/$PACKAGE_NAME\" -Force -Recurse
+    Copy-Item -Path "dist\skyrimnet_chatterbox\skyrimnet_chatterbox.exe" -Destination "archive/$PACKAGE_NAME\" -Force
+    Copy-Item -Path "dist\skyrimnet_chatterbox\_internal" -Destination "archive/$PACKAGE_NAME\" -Force -Recurse
 
 
     if (-not $noarchive) {
