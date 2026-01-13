@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Union, Tuple
 
 import torch
-import torchaudio
 import torchaudio.functional as taF
 
 from .models.s3tokenizer import S3_SR

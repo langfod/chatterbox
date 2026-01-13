@@ -29,7 +29,7 @@ if (-not $nobuild -or $noclean) {
     Write-Host "Starting build process..."
     if ($noclean) {
         Write-Host "Skipping clean step as per -noclean flag."
-        Start-Process -FilePath "pyinstaller" -ArgumentList "--noconfirm", "--log-level=ERROR", "skyrimnet_chatterbox.spec" -Wait -NoNewWindow
+        Start-Process -FilePath "pyinstaller" -ArgumentList "--noconfirm", "--log-level=ERROR", "skyrimnet-chatterbox.spec" -Wait -NoNewWindow
     }
     else {
         if (Test-Path "build") {
@@ -43,7 +43,7 @@ if (-not $nobuild -or $noclean) {
         }
         # remove all "__pycache__" folders under skyrimnet_chatterbox recursively
         Get-ChildItem -Path "skyrimnet_chatterbox" -Recurse -Directory | Where-Object { $_.Name -eq "__pycache__" } | Remove-Item -Recurse -Force
-        Start-Process -FilePath "pyinstaller" -ArgumentList "--clean", "--noconfirm", "--log-level=ERROR", "skyrimnet_chatterbox.spec" -Wait -NoNewWindow
+        Start-Process -FilePath "pyinstaller" -ArgumentList "--clean", "--noconfirm", "--log-level=ERROR", "skyrimnet-chatterbox.spec" -Wait -NoNewWindow
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Build failed. Exiting."
@@ -64,6 +64,9 @@ if ($test) {
     Copy-Item -Path "skyrimnet_config.txt" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
     Copy-Item -Path "examples\Start.bat" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
     Copy-Item -Path "examples\Start_CHATTERBOX.ps1" -Destination "dist\skyrimnet_chatterbox\" -Force -Recurse
+    New-Item -Path "dist\skyrimnet_chatterbox\speakers\en" -ItemType Directory -Force
+    Copy-Item -Path "speakers\en\malecommoner.wav" -Destination "dist\skyrimnet_chatterbox\speakers\en\" -Force 
+    Copy-Item -Path "speakers\en\malebrute.wav" -Destination "dist\skyrimnet_chatterbox\speakers\en\" -Force
 
 
     Set-Location -Path ./dist/skyrimnet_chatterbox
@@ -89,9 +92,13 @@ else {
     Copy-Item -Path "skyrimnet_config.txt" -Destination "archive/$PACKAGE_NAME\" -Force
     Copy-Item -Path "README.md" -Destination "archive/$PACKAGE_NAME\" -Force  
     Copy-Item -Path "examples\Start.bat" -Destination "archive/$PACKAGE_NAME\" -Force
+    Copy-Item -Path "examples\Start_ML.bat" -Destination "archive/$PACKAGE_NAME\" -Force
     Copy-Item -Path "examples\Start_CHATTERBOX.ps1" -Destination "archive/$PACKAGE_NAME\" -Force
     Copy-Item -Path "dist\skyrimnet_chatterbox\skyrimnet_chatterbox.exe" -Destination "archive/$PACKAGE_NAME\" -Force
     Copy-Item -Path "dist\skyrimnet_chatterbox\_internal" -Destination "archive/$PACKAGE_NAME\" -Force -Recurse
+    New-Item -Path "archive/$PACKAGE_NAME/speakers/en" -ItemType Directory -Force
+    Copy-Item -Path "speakers\en\malecommoner.wav" -Destination "archive/$PACKAGE_NAME/speakers/en/" -Force
+    Copy-Item -Path "speakers\en\malebrute.wav" -Destination "archive/$PACKAGE_NAME/speakers/en/" -Force
 
 
     if (-not $noarchive) {

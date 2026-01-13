@@ -22,34 +22,6 @@ def safe_model_to_dtype(model_component, dtype: torch.dtype) -> None:
         model_component.to(dtype=dtype)
 
 
-def safe_conditional_to_dtype(model, dtype: torch.dtype) -> None:
-    """
-    Safely move model conditionals to the specified dtype with comprehensive null checks.
-    
-    Args:
-        model: The model containing conditionals
-        dtype: Target torch.dtype
-    """
-    if hasattr(model, 'conds') and model.conds is not None:
-        if hasattr(model.conds, 't3') and model.conds.t3 is not None:
-            model.conds.t3.to(dtype=dtype)
-
-
-def initialize_model_dtype(model, dtype: torch.dtype) -> None:
-    """
-    Initialize a Chatterbox model with proper dtype handling for all components.
-    
-    Args:
-        model: ChatterboxTTS or ChatterboxMultilingualTTS instance
-        dtype: Target torch.dtype
-    """
-    # Move main t3 model
-    if hasattr(model, 't3') and model.t3 is not None:
-        model.t3.to(dtype=dtype)
-    
-    # Move conditionals if they exist
-    safe_conditional_to_dtype(model, dtype)
-
 
 def safe_tensor_to_device_dtype(
     tensor: Optional[torch.Tensor], 

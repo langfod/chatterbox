@@ -1,12 +1,15 @@
 from argparse import ArgumentParser
+from collections import defaultdict
 from pathlib import Path
 import random
+import threading
 from time import perf_counter_ns
 
 import gradio as gr
 from loguru import logger
 import numpy as np
 import torch
+import torch._inductor.cudagraph_trees as cudagraph_trees
 
 
 try:
@@ -15,12 +18,11 @@ try:
         save_conditionals_cache,
         get_cache_key,
         save_torchaudio_wav,
-        init_conditional_memory_cache,
         clear_output_directories,
         clear_cache_files
     )
+    from model_utils import load_model_if_needed, safe_conditional_to_dtype
     from chatterbox.shared_utils import validate_language_id
-    from chatterbox.tensor_utils import initialize_model_dtype, safe_conditional_to_dtype
     from shared_config import get_tts_params, DEFAULT_CACHE_CONFIG, DEFAULT_TTS_PARAMS, SUPPORTED_LANGUAGE_CODES
 except ImportError:
     from .cache_utils import (
@@ -28,12 +30,11 @@ except ImportError:
         save_conditionals_cache,
         get_cache_key,
         save_torchaudio_wav,
-        init_conditional_memory_cache,
         clear_output_directories,
         clear_cache_files
     )
     from .chatterbox.shared_utils import validate_language_id
-    from .chatterbox.tensor_utils import initialize_model_dtype, safe_conditional_to_dtype
+    from .model_utils import load_model_if_needed, safe_conditional_to_dtype
     from .shared_config import get_tts_params, DEFAULT_CACHE_CONFIG, DEFAULT_TTS_PARAMS, SUPPORTED_LANGUAGE_CODES
 
 START_DIRECTORY = Path(__file__).parent.absolute()
@@ -62,36 +63,19 @@ def set_seed(seed: int):
 
 
 def load_model():
-    global MODEL, MULTILINGUAL, TURBO
-    if MODEL is None:
-        if TURBO:
-            logger.info("Loading Turbo Model")
-            try:
-                from chatterbox.tts_turbo import ChatterboxTurboTTS as Chatterbox
-            except ImportError:
-                from .chatterbox.tts_turbo import ChatterboxTurboTTS as Chatterbox
-        elif MULTILINGUAL:
-            logger.info("Loading Multilingual Model")
-            try:
-                from chatterbox.mtl_tts import ChatterboxMultilingualTTS as Chatterbox
-            except ImportError:
-                from .chatterbox.mtl_tts import ChatterboxMultilingualTTS as Chatterbox
-        else:
-            logger.info("Loading English Model")
-            try:
-                from chatterbox.tts import ChatterboxTTS as Chatterbox
-            except ImportError:
-                from .chatterbox.tts import ChatterboxTTS as Chatterbox
-        MODEL = Chatterbox.from_pretrained(DEVICE)
-        initialize_model_dtype(MODEL, DTYPE)
-        init_conditional_memory_cache(MODEL, DEVICE, DTYPE, supported_languages=SUPPORTED_LANGUAGE_CODES)
-        torch.cuda.empty_cache()
+    global MODEL
+    model_choice = "MULTILINGUAL" if MULTILINGUAL else "TURBO" if TURBO else "ENGLISH"
+    MODEL = load_model_if_needed(model_choice, DEVICE, DTYPE, SUPPORTED_LANGUAGE_CODES )
     return MODEL
-
 
 def generate(model, text,  language_id="en",audio_prompt_path=None, exaggeration=0.5, temperature=0.8, seed_num=0, cfgw=0, min_p=0.05, top_p=1.0, repetition_penalty=1.2, disable_tqdm=False):
     global MODEL, MULTILINGUAL, TURBO
-    
+    # Initialize CUDA graph TLS for this thread (required for Gradio worker threads)
+    if not hasattr(cudagraph_trees.local, 'tree_manager_containers'):
+        cudagraph_trees.local.tree_manager_containers = {}
+    if not hasattr(cudagraph_trees.local, 'tree_manager_locks'):
+        cudagraph_trees.local.tree_manager_locks = defaultdict(threading.Lock)
+
     language_id = validate_language_id(language_id, SUPPORTED_LANGUAGE_CODES)
 
     
@@ -153,7 +137,7 @@ def generate(model, text,  language_id="en",audio_prompt_path=None, exaggeration
         # "generate_token_backend": "inductor",
         # "generate_token_backend": "inductor-strided",
         #"generate_token_backend": "cudagraphs-strided",
-        #"stride_length": 4, # "strided" options compile <1-2-3-4> iteration steps together, which improves performance by reducing memory copying issues in torch.compile
+        "stride_length": 4, # "strided" options compile <1-2-3-4> iteration steps together, which improves performance by reducing memory copying issues in torch.compile
         "skip_when_1": True, # skips Top P when it's set to 1.0
         "benchmark": False, # Synchronizes CUDA to get the real it/s 
     }
@@ -257,7 +241,7 @@ def generate_audio(
     
     logger.debug(f"Final parameters - temp: {inference_kwargs['temperature']}, min_p: {inference_kwargs['min_p']}, top_p: {inference_kwargs['top_p']}, rep_penalty: {inference_kwargs['repetition_penalty']}, cfg_weight: {inference_kwargs['cfg_weight']}, exaggeration: {inference_kwargs['exaggeration']}")
     
-    wavout =  generate(
+    wav_out_path =  generate(
         model=MODEL, 
         text=text, 
         language_id=language, 
@@ -271,8 +255,14 @@ def generate_audio(
         repetition_penalty=inference_kwargs['repetition_penalty'],
         disable_tqdm=True
     )
-    wavout_path = Path(wavout).relative_to(START_DIRECTORY.parent)
-    return wavout_path, job_id
+    if IGNORE_PING == "pending":
+        IGNORE_PING = True
+        print(f"{wav_out_path}")
+        Path(wav_out_path).unlink(missing_ok=True)
+        wav_out_path = SILENCE_AUDIO_PATH
+
+    return wav_out_path, job_id
+
 with gr.Blocks() as demo:
     
     gr.set_static_paths(["assets", "cache"])

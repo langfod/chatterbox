@@ -14,10 +14,20 @@ Behavior:
 .PARAMETER Multilingual
 Enable multilingual text-to-speech mode
 
-.EXAMPLE
-.\2_Start_CHATTERBOX.ps1
-Start CHATTERBOX in standard mode
+.PARAMETER Turbo
+Enable turbo mode (faster, English only)
 
+.EXAMPLE
+.\2_Start_ChatterBox.ps1
+Start ChatterBox in standard mode
+
+.EXAMPLE
+.\2_Start_ChatterBox.ps1 -Multilingual
+Start ChatterBox in multilingual mode
+
+.EXAMPLE
+.\2_Start_ChatterBox.ps1 -Turbo
+Start ChatterBox in turbo mode
 
 Notes:
 - If the venv python isn't found this script will try the system python in PATH.
@@ -25,7 +35,8 @@ Notes:
 #>
 
 param(
-    [switch]$multilingual,
+    [switch]$Multilingual,
+    [switch]$Turbo,
     [string]$server = "0.0.0.0",
     [int]$port = 7860
 )
@@ -41,24 +52,13 @@ function Show-Banner {
  Y8a     a8P  88`"Yba,    `8b,d8'    88          88  88      88      88  88     `8888  "8b,   ,aa    88,    
   "Y88888P"   88   `Y8a     Y88'     88          88  88      88      88  88      `888   `"Ybbd8"'    "Y888  
                             d8'                                               
-                           d8'       CHATTERBOX (Gradio / Zonos Emulated)                                       
+                           d8'       ChatterBox                                      
  
 '@
 
     Write-Host $banner
 }
 
-function Invoke-Batch($batPath, $arguments) {
-    if (-not (Test-Path $batPath)) {
-        Write-Host "Batch not found: $batPath" -ForegroundColor Yellow
-        return 1
-    }
-    # Use cmd.exe /c to execute the batch and capture its exit code
-    $cmd = "`"$batPath`" $arguments"
-    Write-Host "Running: $cmd"
-    cmd.exe /c $cmd
-    return $LASTEXITCODE
-}
 
 function Any_Key_Wait {
     param (
@@ -70,27 +70,54 @@ function Any_Key_Wait {
     Write-Host "$msg" -NoNewline
     While ( !([Console]::KeyAvailable) -And ($secondsRunning -gt 0)) {
         Start-Sleep -Seconds 1;
-        Write-Host “$secondsRunning..” -NoNewLine; $secondsRunning--
-    }
+        Write-Host "$secondsRunning.." -NoNewline; $secondsRunning--
 }
 
-
+}
 Clear-Host
 Show-Banner
 
-
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-
-cmd.exe /c "call `"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat`" && set > %temp%\vcvars.txt"
-
-
-Get-Content "$env:temp\vcvars.txt" | Foreach-Object {
-  if ($_ -match "^(.*?)=(.*)$") {
-    Set-Content "env:\$($matches[1])" $matches[2]
-  }
+function Find-VsDevShell {
+    # Method 1: Try vswhere.exe (most reliable - works regardless of install location)
+    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    if (Test-Path $vswhere) {
+        $vsPath = & $vswhere -latest -property installationPath 2>$null
+        if ($vsPath) {
+            $script = Join-Path $vsPath "Common7\Tools\Launch-VsDevShell.ps1"
+            if (Test-Path $script) { return $script }
+        }
+    }
+    
+    # Method 2: Check common install locations as fallback
+    $basePaths = @($env:ProgramFiles, ${env:ProgramFiles(x86)})
+    $years = @('2026', '2022', '2019')
+    $editions = @('Community', 'Professional', 'Enterprise', 'BuildTools')
+    
+    foreach ($base in $basePaths) {
+        foreach ($year in $years) {
+            foreach ($edition in $editions) {
+                $path = Join-Path $base "Microsoft Visual Studio\$year\$edition\Common7\Tools\Launch-VsDevShell.ps1"
+                if (Test-Path $path) { return $path }
+            }
+        }
+    }
+    
+    return $null
 }
 
-Write-Host "`nAttempting to start SkyrimNet CHATTERBOX..." -ForegroundColor Green
+# Find and initialize VS Dev Shell for x64 native tools
+$vsDevShellPath = Find-VsDevShell
+if ($vsDevShellPath) {
+    Write-Host "Found VS Dev Shell: $vsDevShellPath" -ForegroundColor Cyan
+    # Save current directory, launch VS dev shell, and return to original directory
+    $currentDirectory = $PWD.Path
+    & $vsDevShellPath -Arch amd64
+    Set-Location -Path $currentDirectory
+} else {
+    Write-Warning "Visual Studio Dev Shell not found. Some features may not work correctly."
+    Write-Host "Install Visual Studio or Build Tools from https://visualstudio.microsoft.com/downloads/" -ForegroundColor Yellow
+}
+
 
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $exePath = Join-Path $scriptRoot 'skyrimnet_chatterbox.exe'
@@ -105,18 +132,21 @@ $exePath = Join-Path $scriptRoot 'skyrimnet_chatterbox.exe'
 
 $exeArgs = "--server $server --port $port"
 
-if ($multilingual) {
-    $exeArgs = "$exeArgs --use_multilingual"
+if ($Multilingual -and $Turbo) {
+    Write-Host "Error: Cannot use both --multilingual and --turbo flags together. Turbo only supports English." -ForegroundColor Red
+    Read-Host -Prompt "Press Enter to exit"
+    exit 1
+}
+if ($Multilingual) {
+    $exeArgs += " --use_multilingual"
     Write-Host "Multilingual mode enabled" -ForegroundColor Cyan
+} elseif ($Turbo) {
+    $exeArgs += " --turbo"
+    Write-Host "Turbo mode enabled (faster, English only)" -ForegroundColor Cyan
 }
 
-# Start a new PowerShell window, set the console title, and run the python module inside it.
-if ($exeArgs) {
-    Write-Host "Starting new PowerShell window to run: $pythonPath -m skyrimnet_chatterbox $exeArgs"
-} else {
-    Write-Host "Starting new PowerShell window to run: $pythonPath -m skyrimnet_chatterbox"
-}
-
+Write-Host "`nAttempting to start SkyrimNet CHATTERBOX..." -ForegroundColor Green
+Write-Host "`nFlags: $exeArgs" -ForegroundColor Green
 # Build the command to run inside the new PowerShell instance. Escape $Host so it's evaluated by the child PowerShell.
 $psCommand = "`$Host.UI.RawUI.WindowTitle = 'SkyrimNet CHATTERBOX'; & '$exePath' $exeArgs"
 
@@ -131,5 +161,4 @@ try {
 }
 
 Write-Host "`nSkyrimNet CHATTERBOX should start in another window. Default web server is http://localhost:7860" -ForegroundColor Green
-Write-Host "If that window closes immediately, run '.venv\Scripts\python -m skyrimnet_chatterbox' to capture errors." -ForegroundColor Yellow
 Any_Key_Wait -msg "Otherwise, you may close this window if it does not close itself.`n" -wait_sec 20

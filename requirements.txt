@@ -1,9 +1,9 @@
 #PYTORCH*********************************************************************
 --extra-index-url=https://download.pytorch.org/whl/cu128
-#--pre --extra-index-url=https://download.pytorch.org/whl/nightly/cu128
-torch #<2.9
+## --extra-index-url=https://download.pytorch.org/whl/cu129
+torch<2.10
 torchaudio
-triton-windows<3.6 #<3.5
+triton-windows<3.6
 
 scipy
 numpy
@@ -23,6 +23,8 @@ safetensors
 psutil
 loguru
 # web stuff
+websockets
+wsproto
 python-multipart
 fastapi
 uvicorn

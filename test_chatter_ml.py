@@ -26,9 +26,9 @@ from loguru import logger
 #from skyrimnet_chatterbox.chatterbox.mtl_tts import ChatterboxMultilingualTTS as Chatterbox
 
 MULTILINGUAL = False
-from skyrimnet_chatterbox.chatterbox.tts import ChatterboxTTS as Chatterbox
+#from skyrimnet_chatterbox.chatterbox.tts import ChatterboxTTS as Chatterbox
 
-#from skyrimnet_chatterbox.chatterbox.tts_turbo import ChatterboxTurboTTS as Chatterbox
+from skyrimnet_chatterbox.chatterbox.tts_turbo import ChatterboxTurboTTS as Chatterbox
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
