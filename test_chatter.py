@@ -6,9 +6,13 @@ print(f"Test script PID: {os.getpid()}")
 print(f"Test script process info: {psutil.Process(os.getpid())}")
 
 
-from src.cache_utils import (
-    clear_cache_files,
-    clear_output_directories,
+from skyrimnet_chatterbox.cache_utils import (
+    load_conditionals_cache,
+   save_conditionals_cache,
+   get_cache_key,
+   save_torchaudio_wav,
+   clear_cache_files,
+   clear_output_directories,
 )
 # Third-party imports
 from pathlib import Path
@@ -16,7 +20,7 @@ from pathlib import Path
 import torch
 from loguru import logger
 import importlib
-skyrimnet_chatterbox = importlib.import_module("skyrimnet-chatterbox")
+skyrimnet_chatterbox = importlib.import_module("skyrimnet_chatterbox")
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
