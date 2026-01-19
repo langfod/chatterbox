@@ -37,7 +37,7 @@ except ImportError:
     from .model_utils import load_model_if_needed, safe_conditional_to_dtype
     from .shared_config import get_tts_params, DEFAULT_CACHE_CONFIG, DEFAULT_TTS_PARAMS, SUPPORTED_LANGUAGE_CODES
 
-START_DIRECTORY = Path(__file__).parent.absolute()
+START_DIRECTORY = Path.cwd()
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DTYPE = torch.bfloat16 if DEVICE == "cuda" else torch.float32
 MODEL = None
@@ -171,7 +171,7 @@ def generate(model, text,  language_id="en",audio_prompt_path=None, exaggeration
     wav_length = wav.shape[-1]   / model.sr
 
     logger.info(f"Generated audio: {wav_length:.2f}s {model.sr/1000:.2f}kHz in {total_duration_s:.2f}s. Speed: {wav_length / total_duration_s:.2f}x")
-    wave_file_path = save_torchaudio_wav(wav, model.sr, audio_path=audio_prompt_path)
+    wave_file_path = save_torchaudio_wav(wav, model.sr, audio_path=audio_prompt_path).relative_to(START_DIRECTORY)
     del wav
     return str(wave_file_path)
 
@@ -240,7 +240,7 @@ def generate_audio(
     
     logger.debug(f"Final parameters - temp: {inference_kwargs['temperature']}, min_p: {inference_kwargs['min_p']}, top_p: {inference_kwargs['top_p']}, rep_penalty: {inference_kwargs['repetition_penalty']}, cfg_weight: {inference_kwargs['cfg_weight']}, exaggeration: {inference_kwargs['exaggeration']}")
     
-    wav_out_path =  generate(
+    wav_out =  generate(
         model=MODEL, 
         text=text, 
         language_id=language, 
@@ -256,11 +256,11 @@ def generate_audio(
     )
     if IGNORE_PING == "pending":
         IGNORE_PING = True
-        print(f"{wav_out_path}")
-        Path(wav_out_path).unlink(missing_ok=True)
+        print(f"{wav_out}")
+        Path(wav_out).unlink(missing_ok=True)
         wav_out_path = SILENCE_AUDIO_PATH
 
-    return wav_out_path, job_id
+    return wav_out, job_id
 
 with gr.Blocks() as demo:
     
