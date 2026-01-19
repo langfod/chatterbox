@@ -171,10 +171,9 @@ def generate(model, text,  language_id="en",audio_prompt_path=None, exaggeration
     wav_length = wav.shape[-1]   / model.sr
 
     logger.info(f"Generated audio: {wav_length:.2f}s {model.sr/1000:.2f}kHz in {total_duration_s:.2f}s. Speed: {wav_length / total_duration_s:.2f}x")
-    wave_file = str(save_torchaudio_wav(wav.cpu(), model.sr, audio_path=audio_prompt_path))
+    wave_file_path = save_torchaudio_wav(wav, model.sr, audio_path=audio_prompt_path)
     del wav
-    torch.cuda.empty_cache()
-    return wave_file
+    return str(wave_file_path)
 
 
 ### SkyrimNet Zonos Emulated   
@@ -336,8 +335,10 @@ with gr.Blocks() as demo:
     )
     model_choice = gr.Textbox(visible=False)
     language = gr.Textbox(visible=False)
-    speaker_audio = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference Audio File", value=None, visible=False)
-    prefix_audio = gr.Audio(sources=["upload", "microphone"], type="filepath", label="Reference Audio File", value=None, visible=False)
+    speaker_audio = gr.Audio(sources=["upload", "microphone"], type="filepath",
+                             label="Reference Audio File", value=None, visible=False)
+    prefix_audio = gr.Audio(sources=["upload", "microphone"], type="filepath",
+                            label="Reference Audio File", value=None, visible=False)
     emotion1 = gr.Number(visible=False)
     emotion2 = gr.Number(visible=False)
     emotion3 = gr.Number(visible=False)
@@ -393,8 +394,8 @@ with gr.Blocks() as demo:
         randomize_seed_toggle,
         unconditional_keys,
     ],
-                     outputs=[audio_output, seed_num],
-                     )
+        outputs=[audio_output, seed_num],
+    )
     
 
 def parse_arguments():

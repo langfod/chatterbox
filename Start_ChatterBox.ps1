@@ -162,7 +162,7 @@ if ($Multilingual -and $Turbo) {
     exit 1
 }
 if ($Multilingual) {
-    $pythonArgs = "$pythonArgs--multilingual"
+    $pythonArgs = "$pythonArgs --multilingual"
     Write-Host "Multilingual mode enabled" -ForegroundColor Cyan
 } elseif ($Turbo) {
     $pythonArgs = "$pythonArgs --turbo"
