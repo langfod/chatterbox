@@ -252,8 +252,8 @@ class ChatterboxMultilingualTTS:
         if estimated_tokens <= max_chunk_tokens:
             # Text is small enough - process normally without chunking
             return self._generate_single_chunk(
-                text, language_id, cfg_weight, max_new_tokens, temperature,
-                max_cache_len, repetition_penalty, min_p, top_p, t3_params
+                text=text, language_id=language_id, cfg_weight=cfg_weight, max_new_tokens=max_new_tokens, temperature=temperature,
+                max_cache_len=max_cache_len, repetition_penalty=repetition_penalty, min_p=min_p, top_p=top_p, disable_tqdm=disable_tqdm, t3_params=t3_params
             )
         else:
             # Text is too large - split into chunks and process separately
@@ -273,8 +273,8 @@ class ChatterboxMultilingualTTS:
                 self.conds = original_conds.clone()
                 
                 chunk_audio = self._generate_single_chunk(
-                    chunk, language_id, cfg_weight, max_new_tokens, temperature,
-                    max_cache_len, repetition_penalty, min_p, top_p, disable_tqdm=False, t3_params=t3_params
+                    text=chunk, language_id=language_id, cfg_weight=cfg_weight, max_new_tokens=max_new_tokens, temperature=temperature,
+                    max_cache_len=max_cache_len, repetition_penalty=repetition_penalty, min_p=min_p, top_p=top_p, disable_tqdm=False, t3_params=t3_params
                 )
                 audio_chunks.append(chunk_audio)
             

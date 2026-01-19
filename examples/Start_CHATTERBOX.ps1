@@ -138,7 +138,7 @@ if ($Multilingual -and $Turbo) {
     exit 1
 }
 if ($Multilingual) {
-    $exeArgs += " --use_multilingual"
+    $exeArgs += " --multilingual"
     Write-Host "Multilingual mode enabled" -ForegroundColor Cyan
 } elseif ($Turbo) {
     $exeArgs += " --turbo"
