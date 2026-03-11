@@ -85,6 +85,12 @@ function Any_Key_Wait {
 }
 
 }
+
+# Set GRADIO_TEMP_DIR to the script root directory
+$scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$env:GRADIO_TEMP_DIR = Join-Path $scriptRoot ".gradio-tmp"
+if (-not (Test-Path -LiteralPath $env:GRADIO_TEMP_DIR)) { New-Item -ItemType Directory -Path $env:GRADIO_TEMP_DIR | Out-Null }
+
 Clear-Host
 Show-Banner
 
